@@ -1,10 +1,18 @@
 import numpy as np
 
 
+def FindKeyFromValueOfDict(map: dict, value: int) -> int:
+    for key in map:
+        value_in_dict = map[key]
+        if value_in_dict == value:
+            return key
+    return None
+
+
 class PointCloud:
     """
     PointCloud.
-    Used to assign smaller point clouds to each other. The inner geometry (distances) of these two clouds has to be the same
+    Used to match smaller point clouds to each other. The inner geometry (distances) of these two clouds has to be the same
     (rigid body transformation, but with a certain threshold of change of inner geometry).
     One purpose would be a geodetic measurement of marked points.
 
@@ -34,10 +42,11 @@ class PointCloud:
         number_of_points = len(points)
         distances = np.zeros((number_of_points, number_of_points))
         for i in range(number_of_points):
-            for j in range(number_of_points):
+            for j in range(i+1, number_of_points):
                 if i == j:
                     continue
                 distances[i, j] = np.linalg.norm(points[i] - points[j])
+                distances[j, i] = distances[i, j]
         return distances
 
 
@@ -66,6 +75,7 @@ class PointCloud:
         target_distances = PointCloud.CalculateDistanceMatrix(target_point_cloud)
         target_number_of_points = len(target_point_cloud)
         index_table = dict()
+        altered_indexes_correspondencies_counter = dict()
         for i in range(self.number_of_points):
             correspondencies = [0] * target_number_of_points
             for j in range(self.number_of_points):
@@ -77,12 +87,54 @@ class PointCloud:
                 correspondencies[target_indexes[1]] += 1
             if all(el == 0 for el in correspondencies):
                 continue
-            if not i in index_table.keys():
-                # if the point with index i is not contained in the target point cloud, it could happen that other
-                # distances are equal to the compared distance and hence wrong points are added to the correspondence.
-                # Those points are filtered with this condition
-                if max(correspondencies) > 3:
-                    index_table[i] = correspondencies.index(max(correspondencies))
+            if correspondencies.count(max(correspondencies)) > 1:
+                continue
+            # if the point with index i is not contained in the target point cloud, it could happen that other
+            # distances are equal to the compared distance and hence wrong points are added to the correspondence.
+            # Those points are filtered with this condition
+            if max(correspondencies) >= min((self.number_of_points / 2) - 1, 3):
+                altered_index = correspondencies.index(max(correspondencies))
+                if altered_index in altered_indexes_correspondencies_counter.keys():
+                    if altered_indexes_correspondencies_counter[altered_index] < max(correspondencies):
+                        index_to_delete = FindKeyFromValueOfDict(index_table, altered_index)
+                        del index_table[index_to_delete]
+                        index_table[i] = altered_index
+                        altered_indexes_correspondencies_counter[altered_index] = max(correspondencies)
+                else:
+                    index_table[i] = altered_index
+                    altered_indexes_correspondencies_counter[altered_index] = max(correspondencies)
+
+        # match points on basis of already matched points
+        if len(index_table) == 0:
+            return dict()
+        index_added_point = list(index_table.keys())[0]
+        altered_index_added_point = index_table[index_added_point]
+        for i in range(self.number_of_points):
+            if i in index_table.keys():
+                continue
+            distance_to_look_for = self.distances[i, index_added_point]
+            altered_index = -1
+            min_deviation = np.inf
+            deviation = np.inf
+            for j in range(target_number_of_points):
+                if j in list(index_table.values()):
+                    continue
+                deviation = abs(distance_to_look_for - target_distances[altered_index_added_point, j])
+                if deviation < min_deviation:
+                    min_deviation = deviation
+                    altered_index = j
+            if altered_index == -1 or min_deviation > self.threshold:
+                continue
+            add_point = True
+            for other_point_key in list(index_table.keys())[1:]:
+                source_distance = self.distances[other_point_key, i]
+                other_point_key_altered = index_table[other_point_key]
+                target_distance = target_distances[altered_index, other_point_key_altered]
+                if abs(source_distance - target_distance) > self.threshold:
+                    add_point = False
+                    break
+            if add_point:
+                index_table[i] = altered_index
         return index_table
 
 
@@ -110,7 +162,7 @@ def ShuffleRandomPoints(number_of_points: int, lower_bound=-1000, upper_bound=10
 def Test(number_of_iterations, number_of_points, number_of_additional_points, number_of_points_to_delete):
     lower_bound = -1000
     upper_bound = 1000
-    for _ in range(number_of_iterations):
+    for counter in range(number_of_iterations):
         expected_table_indexes, points, altered_points = ShuffleRandomPoints(number_of_points)
         for i in range(number_of_additional_points):
             point = np.array([uniform(lower_bound, upper_bound), uniform(lower_bound, upper_bound),
@@ -133,10 +185,10 @@ def Test(number_of_iterations, number_of_points, number_of_additional_points, nu
             altered_points.pop(index_altered)
             i += 1
 
-        point_cloud = PointCloud(points, 1)
+        point_cloud = PointCloud(points, 0.1)
         actual_table_indexes = point_cloud.Assign(altered_points)
         if expected_table_indexes != actual_table_indexes:
-            print("Fail")
+            print("Fail on iteration", counter)
             print(expected_table_indexes)
             print(actual_table_indexes)
             print(points)
@@ -153,7 +205,7 @@ def Test(number_of_iterations, number_of_points, number_of_additional_points, nu
 if __name__ == "__main__":
     number_of_iterations = 100
     number_of_points = 10
-    number_of_additional_points = 3
+    number_of_additional_points = 5
     number_of_points_to_delete = 3
 
     success = Test(number_of_iterations, number_of_points, number_of_additional_points, number_of_points_to_delete)
