@@ -7,3 +7,4 @@ Used to match smaller point clouds to each other. The more points are given, the
 
 ## Use
 Instantiate an object of this class by giving a point cloud. Match / assign a second point cloud by using the method 'Assign'. The output is a dictionary which maps points of the source point cloud to points of the target / second point cloud. Example: {0: 2, 1:1, 2:0} The point 0 of the source point cloud is equal to the point 2 of the target point cloud.
+CAUTION: The order of the points of the point cloud to match is not guaranteed to remain unaltered! The output however is refered to the new order. 
